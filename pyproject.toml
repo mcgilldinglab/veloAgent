@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veloagent"
+version = "0.1.0"
+description = "Scalable deep learning and agent-based modeling framework for RNA velocity estimation"
+authors = [
+    { name="Your Name", email="your.email@example.com" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+
+dependencies = [
+    "numpy",
+    "scipy",
+    "pandas",
+    "matplotlib",
+    "scanpy",
+    "scvelo",
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "mesa",
+    "tqdm",
+    "scikit-learn",
+    "h5py",
+    "networkx",
+]
