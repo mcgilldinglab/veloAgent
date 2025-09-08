@@ -1,25 +1,11 @@
 import mesa
 import numpy as np
 from numpy.linalg import norm
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import random
-import scanpy as sc
-import scvelo as scv
-from sklearn.metrics.cluster import contingency_matrix
-from sklearn.metrics import f1_score
 from sklearn.neighbors import NearestNeighbors
-import scipy.sparse as sp
-import sys
-sys.path.insert(1,'../SIRV/')
-from main import SIRV
 from mesa.visualization.UserParam import *
 from mesa.visualization.modules import CanvasGrid, ChartModule
 from mesa.visualization.ModularVisualization import ModularServer
-import anndata
 import math
-import mplscience
 
 
 # Agent Based Model
