@@ -13,5 +13,5 @@ def preprocess(data, num_genes=2000, min_count=20):
     data.X = np.nan_to_num(data.X, nan=0)
     sc.pp.pca(data)
     scv.pp.neighbors(data, n_neighbors=30)
-    scv.tl.umap(adata)
+    scv.tl.umap(data)
     scv.pp.moments(data, n_pcs=None, n_neighbors=30)
