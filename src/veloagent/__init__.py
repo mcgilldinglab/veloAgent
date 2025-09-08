@@ -9,7 +9,7 @@ from .vae import (
 
 from .preprocessing import preprocess
 
-from .genenet import (
+from .gg_net import (
     GeneNet,
     GeneNetAblation,
     CustomizedLinear,
