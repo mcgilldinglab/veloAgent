@@ -195,7 +195,7 @@ def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_e
 
     return best_vae
 
-def get_embedding(adata, vae_model):
+def get_embedding(adata, vae_model, device):
     s = torch.tensor(adata.layers['spliced'].A, dtype=torch.float32).to(device)
     u = torch.tensor(adata.layers['unspliced'].A, dtype=torch.float32).to(device)
 

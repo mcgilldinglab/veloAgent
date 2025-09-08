@@ -132,6 +132,7 @@ class CellModel(mesa.Model):
             # remove self index
             mask = idxs != i
             neighbor_idxs = idxs[mask]
+            neighbor_idxs = neighbor_idxs.astype(int)
             ag.neighbors = [self.schedule.agents[j] for j in neighbor_idxs]
             dists = dists_list[i][mask]
             # avoid divisions by zero; cap very small distances
@@ -198,8 +199,8 @@ class CellModel(mesa.Model):
                 nb_pos = (x_nb, y_nb)
                 
                 dist = self.distance(ag_pos, nb_pos)
-                
-                inv_dist = 1/(dist**self.deg_fred)
+                epsilon = 1e-6
+                inv_dist = 1 / ((dist + epsilon) ** self.deg_fred)
                 
                 nb_inv_dist.append(inv_dist)
             

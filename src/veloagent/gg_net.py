@@ -66,7 +66,7 @@ def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
 
     alias = get_alias(data, prot_names, prot_alias)
     
-    genes = pd.DataFrame(adata.var.index)
+    genes = pd.DataFrame(data.var.index)
     genes.rename(columns={varname: 'gene'}, inplace=True)
     
     # Merge the gene list with the alias DataFrame, keeping all genes and their corresponding proteins
@@ -337,7 +337,7 @@ def adj_velocity(data, velocity, indices):
     return adj_vel
 
 
-def train_gg(num_epochs, data, embed_basis, patience=10, num_nbrs=30, dt=0.3, batch=0.25):
+def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25):
     umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
     smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
     umax[umax == 0] = 1
@@ -411,7 +411,7 @@ def train_gg(num_epochs, data, embed_basis, patience=10, num_nbrs=30, dt=0.3, ba
     logging.info("Training complete")
 
 
-def train_nbr(num_epochs, data, embed_basis, num_nbrs=30, dt=0.3, batch=0.25):
+def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbrs=30, dt=0.3, batch=0.25):
     umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
     smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
     umax[umax == 0] = 1
