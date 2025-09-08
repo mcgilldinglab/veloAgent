@@ -7,11 +7,17 @@ name = "veloagent"
 version = "0.1.0"
 description = "Scalable deep learning and agent-based modeling framework for RNA velocity estimation"
 authors = [
-    { name="Your Name", email="your.email@example.com" }
+    { name="Brent Yoon", email="brentyoon10@gmail.com" }
 ]
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+license = { text="MIT" }
+keywords = ["rna", "velocity", "agent-based", "scRNA-seq"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
 
 dependencies = [
     "numpy",
@@ -29,3 +35,6 @@ dependencies = [
     "h5py",
     "networkx",
 ]
+
+[tool.setuptools.packages.find]
+where = ["src"]
