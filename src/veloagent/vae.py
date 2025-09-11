@@ -100,11 +100,11 @@ class VariationalAutoEncoderGCN(nn.Module):
         reconstructed_u, reconstructed_s = self.decoder(z_reparam)
         return mu, log_var, reconstructed_u, reconstructed_s, z_reparam
 
-def get_vae(adata, z_dim):
+def get_vae(adata, z_dim, lr=1e-2):
 
     loss_fn = nn.MSELoss(reduction="sum")
     vae = VariationalAutoEncoderGCN(adata.n_vars, z_dim)
-    optimizer = torch.optim.Adam(vae.parameters(), lr=1e-2)
+    optimizer = torch.optim.Adam(vae.parameters(), lr)
     
     return vae, optimizer, loss_fn
 
