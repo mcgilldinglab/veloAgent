@@ -1,5 +1,5 @@
 from .vae import (
-    EncoderGCN,
+    Encoder,
     Decoder,
     VariationalAutoEncoderGCN,
     get_vae,
@@ -31,7 +31,7 @@ from .abm import (
 
 __all__ = [
     # VAE
-    "EncoderGCN",
+    "Encoder",
     "Decoder",
     "VariationalAutoEncoderGCN",
     "get_vae",
