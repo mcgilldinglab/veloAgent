@@ -3,8 +3,6 @@ import numpy as np
 from numpy.linalg import norm
 from sklearn.neighbors import NearestNeighbors
 from mesa.visualization.UserParam import *
-from mesa.visualization.modules import CanvasGrid, ChartModule
-from mesa.visualization.ModularVisualization import ModularServer
 import math
 
 

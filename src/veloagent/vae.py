@@ -8,13 +8,12 @@ import math
 from torch_geometric.nn import Sequential
 from tqdm import trange
 import scvelo as scv
-import anndata
 
 
-class EncoderGCN(nn.Module):
+class Encoder(nn.Module):
     
     def __init__(self, in_dim, z_dim):
-        super(EncoderGCN, self).__init__()
+        super(Encoder, self).__init__()
         dim_diff = in_dim - z_dim
         hd1 = z_dim + 2*dim_diff//3
         hd2 = z_dim + dim_diff//3
@@ -82,11 +81,11 @@ class Decoder(nn.Module):
         reconstructed_s = self.net_s(z_data)
         return reconstructed_u, reconstructed_s
 
-class VariationalAutoEncoderGCN(nn.Module):
+class VariationalAutoEncoder(nn.Module):
     
     def __init__(self, in_dim, z_dim):
         super().__init__()
-        self.encoder = EncoderGCN(in_dim, z_dim)
+        self.encoder = Encoder(in_dim, z_dim)
         self.decoder = Decoder(in_dim, z_dim)
         
     def reparameterization(self, mu, var):
@@ -103,7 +102,7 @@ class VariationalAutoEncoderGCN(nn.Module):
 def get_vae(adata, z_dim, lr=1e-2):
 
     loss_fn = nn.MSELoss(reduction="sum")
-    vae = VariationalAutoEncoderGCN(adata.n_vars, z_dim)
+    vae = VariationalAutoEncoder(adata.n_vars, z_dim)
     optimizer = torch.optim.Adam(vae.parameters(), lr)
     
     return vae, optimizer, loss_fn

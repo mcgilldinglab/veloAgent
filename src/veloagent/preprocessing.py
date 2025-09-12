@@ -12,5 +12,4 @@ def preprocess(data, num_genes=2000, min_count=20):
     scv.pp.filter_and_normalize(data, min_shared_counts=min_count, n_top_genes=num_genes)
     data.X = np.nan_to_num(data.X, nan=0)
     scv.pp.neighbors(data, n_neighbors=30)
-    scv.tl.umap(data)
     scv.pp.moments(data, n_pcs=None, n_neighbors=30)
