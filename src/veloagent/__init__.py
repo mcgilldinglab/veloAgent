@@ -29,6 +29,13 @@ from .abm import (
     CellModel,
 )
 
+from .perturbations import (
+    perturbation_score,
+    plt_hist,
+    perturb,
+    perturb_score_plt,
+)
+
 __all__ = [
     # VAE
     "Encoder",
@@ -58,4 +65,10 @@ __all__ = [
     # Agent-Based Model
     "CellAgent",
     "CellModel",
+
+    # Perturbations
+    "perturbation_score",
+    "plt_hist",
+    "perturb",
+    "perturb_score_plt",
 ]
