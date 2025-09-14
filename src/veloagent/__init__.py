@@ -31,7 +31,6 @@ from .abm import (
 
 from .perturbations import (
     perturbation_score,
-    plt_hist,
     perturb,
     perturb_score_plt,
 )
@@ -68,7 +67,6 @@ __all__ = [
 
     # Perturbations
     "perturbation_score",
-    "plt_hist",
     "perturb",
     "perturb_score_plt",
 ]

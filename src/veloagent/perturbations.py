@@ -9,7 +9,7 @@ from veloproj import *
 
 
 # scoring metric code
-def perturbation_score(data, cluster_name, cluster_edges, vel_key='velocity', metric_option=2, pert_param="alpha", dt=0.5):
+def perturbation_score(data, cluster_name, cluster_edges, vel_key='velocity_u', metric_option=1, pert_param="alpha", dt=0.5):
     def cos_sim(A, B):
         A_norm = A / np.linalg.norm(A, axis=1, keepdims=True)
         B_norm = B / np.linalg.norm(B, axis=1, keepdims=True)
@@ -71,15 +71,6 @@ def perturbation_score(data, cluster_name, cluster_edges, vel_key='velocity', me
     return score_df
 
 
-# plot histogram of scores
-def plt_hist(scores):
-    scores.hist(bins=100, figsize=(10, 6))
-    plt.xlabel('Score')
-    plt.ylabel('Num Genes')
-    plt.tight_layout()
-    plt.show()
-
-
 def perturb(adata, gene_list, pert_param, dt=0.5):
     bdata = adata.copy()
 
@@ -115,7 +106,7 @@ def perturb_score_plt(scores):
 
     # Create a bar plot
     plt.figure(figsize=(10, 6))
-    plt.bar(top_25['index'], top_25['score'], color='skyblue')
+    plt.bar(top_25.index, top_25['score'], color='skyblue')
 
     # Add labels and title
     plt.xlabel('gene', fontsize=12)
