@@ -107,7 +107,7 @@ def perturb(adata, gene_list, pert_param, dt=0.5):
 
     return bdata
 
-å
+
 # PERTURBATION SCORE PLOT
 def perturb_score_plt(scores):
     # Sort DataFrame by 'score' in descending order and select the top 25 rows
