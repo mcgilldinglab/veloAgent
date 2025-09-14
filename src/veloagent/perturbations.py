@@ -100,19 +100,28 @@ def perturb(adata, gene_list, pert_param, dt=0.5):
 
 
 # PERTURBATION SCORE PLOT
-def perturb_score_plt(scores):
-    # Sort DataFrame by 'score' in descending order and select the top 25 rows
-    top_25 = scores.sort_values(by='score', ascending=False).head(25).reset_index()
+def perturb_score_plt(scores, gene_list):
+    """
+    scores: DataFrame with a 'score' column
+    gene_list: list of gene names corresponding to the scores
+    """
+    # Create a DataFrame using the explicit gene list
+    scores = scores.copy()
+    scores['gene'] = gene_list
 
-    # Create a bar plot
-    plt.figure(figsize=(10, 6))
-    plt.bar(top_25.index, top_25['score'], color='skyblue')
+    # Sort DataFrame by 'score' in descending order and select the top 25 rows
+    top_25 = scores.sort_values(by='score', ascending=False).head(25)
+
+    # Create a bar plot with gene names on the x-axis
+    plt.figure(figsize=(12, 6))
+    plt.bar(top_25['gene'], top_25['score'], color='skyblue')
 
     # Add labels and title
-    plt.xlabel('gene', fontsize=12)
-    plt.ylabel('score', fontsize=12)
+    plt.xlabel('Gene', fontsize=12)
+    plt.ylabel('Score', fontsize=12)
     plt.title('Breast Cancer Perturbation', fontsize=14)
-    # Reduce the fontsize for tick labels
+
+    # Rotate gene labels and adjust size
     plt.xticks(rotation=90, fontsize=8)
     plt.tight_layout()
 
