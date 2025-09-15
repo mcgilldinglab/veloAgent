@@ -2,6 +2,6 @@
 
 - [x] Create GitHub repository
 - [x] Add README
-- [ ] Release initial version of veloAgent
-- [ ] Add nonspatial dataset tutorial
-- [ ] Add spatial dataset tutorial
+- [x] Release initial version of veloAgent
+- [x] Add veloagent tutorial
+- [x] Add perturbation tutorial
