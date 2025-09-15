@@ -107,10 +107,10 @@ def perturb_score_plt(scores, gene_list):
     """
     # Create a DataFrame using the explicit gene list
     scores = scores.copy()
-    scores['gene'] = gene_list
 
     # Sort DataFrame by 'score' in descending order and select the top 25 rows
     top_25 = scores.sort_values(by='score', ascending=False).head(25)
+    top_25['gene'] = gene_list
 
     # Create a bar plot with gene names on the x-axis
     plt.figure(figsize=(12, 6))
