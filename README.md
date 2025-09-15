@@ -34,7 +34,14 @@ Unique module for targeted manipulation of RNA velocity vectors, enabling simula
 - Guiding experimental design through in silico cell fate manipulation
 
 ## 📦 Installation
-Coming soon...
+# 1️⃣ Create a conda environment with Python 3.8
+conda create -n myvirtenv python=3.8
+
+# 2️⃣ Activate the environment
+conda activate myvirtenv
+
+# 3️⃣ Install veloAgent directly from GitHub
+pip install git+https://github.com/mcgilldinglab/veloAgent.git
 
 ## Contact
 [Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)
