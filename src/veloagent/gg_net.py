@@ -13,6 +13,26 @@ from tqdm import tqdm, trange
 logging.basicConfig(level=logging.INFO)
 
 def load_protein_paths(species, base):
+    """
+    Return file paths for STRING protein data for a given species.
+
+    Parameters
+    ----------
+    species : str
+        Species name ("mouse", "chicken", or "human").
+    base : str
+        Base directory where protein data files are stored.
+
+    Returns
+    -------
+    list of str
+        Paths to the protein info, aliases, and links files for the given species.
+
+    Raises
+    ------
+    ValueError
+        If the species is not supported.
+    """
     if species == "mouse":
         return [f"{base}/mouse/10090.protein.info.v12.0.txt",
             f"{base}/mouse/10090.protein.aliases.v12.0.txt",
@@ -30,9 +50,73 @@ def load_protein_paths(species, base):
 
 
 def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
-    
+    """
+    Create a gene–gene connectivity matrix based on protein–protein interactions (PPIs).
+
+    This function maps genes from an AnnData object to STRING protein IDs using both
+    protein name and alias files, prunes the global PPI network to relevant proteins,
+    and constructs a connectivity matrix that can be used as a prior for models.
+
+    Parameters
+    ----------
+    data : AnnData
+        Annotated data matrix containing gene expression and metadata.
+    num_genes : int
+        Number of genes to include in the connectivity matrix (matrix will be square).
+    prot_names : str
+        Path to STRING protein names file (e.g., `*.protein.info.v12.0.txt`).
+    prot_alias : str
+        Path to STRING protein aliases file (e.g., `*.protein.aliases.v12.0.txt`).
+    gene_conn : str
+        Path to STRING protein–protein interaction links file (e.g., `*.protein.links.v12.0.txt`).
+    varname : str
+        Column name in `data.var` used as gene identifiers (typically `"index"` or `"gene_name"`).
+
+    Returns
+    -------
+    numpy.ndarray
+        Dense binary (0/1) connectivity matrix of shape `(num_genes, num_genes)`,
+        where entry (i, j) = 1 if gene i and gene j are connected in the PPI network.
+
+    Notes
+    -----
+    - Genes with no known PPI connections are artificially connected to all others to
+      avoid isolated nodes (ensuring the matrix has no empty rows/columns).
+    - Internally, a helper function `get_alias` is used to merge gene aliases with
+      protein IDs for mapping.
+    """
+
     # create protein alias
     def get_alias(data, prot_names, prot_alias):
+        """
+        Map genes in the AnnData object to STRING protein IDs using protein names and aliases.
+
+        This function loads the STRING protein names and alias files, filters them to genes 
+        present in the AnnData object, removes duplicate aliases, and merges synonyms so that 
+        each gene is associated with a valid protein ID.
+
+        Parameters
+        ----------
+        data : AnnData
+            Annotated data matrix containing gene information (`data.var_names`).
+        prot_names : str
+            Path to STRING protein names file (e.g., `*.protein.info.v12.0.txt`).
+        prot_alias : str
+            Path to STRING protein aliases file (e.g., `*.protein.aliases.v12.0.txt`).
+
+        Returns
+        -------
+        pandas.DataFrame
+            DataFrame with columns:
+            - `alias` : gene names present in the dataset
+            - `protein_id` : corresponding STRING protein IDs (including synonyms)
+
+        Notes
+        -----
+        - Duplicated aliases are dropped.
+        - Missing aliases are preserved from the alias file 
+        and merged into the final mapping.
+        """
         names = pd.read_csv(prot_names, sep='\t', usecols=[0,1])
         names = names[names['alias'].isin(data.var_names)]
         alias = pd.read_csv(prot_alias, sep='\t', usecols=[0,1])
@@ -98,7 +182,39 @@ def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
 # Define custom autograd function for masked connection.
 class CustomizedLinearFunction(torch.autograd.Function):
     """
-    autograd function which masks it's weights by 'mask'.
+    A custom autograd function that performs a masked linear transformation.
+
+    This function behaves like a standard linear layer (`y = xW^T + b`), but 
+    allows applying a binary mask to the weight matrix during both the forward 
+    and backward passes. Entries in the weight matrix corresponding to `mask == 0` 
+    are forced to zero and remain inactive in gradient updates.
+
+    Forward pass:
+        output = input.mm((weight * mask).T) + bias
+
+    Backward pass:
+        - Gradients w.r.t. weights are also masked, i.e. positions with `mask == 0` 
+          receive zero gradient.
+        - Bias gradient is the sum of gradients along the batch dimension.
+        - Gradients are only computed for inputs that require them 
+          (`ctx.needs_input_grad` is checked for efficiency).
+
+    Parameters
+    ----------
+    input : torch.Tensor
+        Input tensor of shape (batch_size, in_features).
+    weight : torch.Tensor
+        Weight tensor of shape (out_features, in_features).
+    bias : torch.Tensor, optional
+        Bias tensor of shape (out_features,).
+    mask : torch.Tensor, optional
+        Binary mask tensor of the same shape as `weight`. Elements with value 0 
+        deactivate the corresponding weight and prevent gradient flow.
+
+    Returns
+    -------
+    torch.Tensor
+        Output tensor of shape (batch_size, out_features).
     """
 
     # Note that both forward and backward are @staticmethods
@@ -207,6 +323,55 @@ class CustomizedLinear(nn.Module):
 
 
 class GeneNet(nn.Module):
+    """
+    GeneNet: A neural network model for gene-wise parameter prediction with 
+    connectivity priors.
+
+    This network is designed to learn gene-level embeddings or parameters 
+    (e.g., transcriptional rates α, β, γ) from input features while enforcing 
+    biological priors through a masked linear transformation based on 
+    protein–protein interaction (PPI) or gene connectivity matrices.
+
+    Architecture
+    ------------
+    1. Linear(in_dim → gene_dim//2) + BatchNorm + LeakyReLU + Dropout
+    2. Linear(gene_dim//2 → gene_dim) + BatchNorm + LeakyReLU + Dropout
+    3. CustomizedLinear(gene_dim → gene_dim, mask=conn) + BatchNorm + LeakyReLU + Dropout
+       - Applies connectivity constraints so that only biologically relevant 
+         gene–gene interactions contribute.
+    4. Linear(gene_dim → 2*gene_dim) + BatchNorm + LeakyReLU + Dropout
+    5. Linear(2*gene_dim → 3*gene_dim) + Sigmoid
+       - Outputs constrained to [0, 1], suitable for modeling bounded parameters.
+
+    Parameters
+    ----------
+    in_dim : int
+        Dimensionality of the input features (e.g., latent cell embeddings).
+    gene_dim : int
+        Number of genes (output dimensionality per gene).
+    conn : numpy.ndarray or torch.Tensor, optional
+        Gene connectivity matrix (gene_dim × gene_dim). Used to mask weights 
+        in the `CustomizedLinear` layer, enforcing structured sparsity 
+        corresponding to known biological interactions.
+
+    Forward Pass
+    ------------
+    x : torch.Tensor
+        Input tensor of shape (batch_size, in_dim).
+
+    Returns
+    -------
+    torch.Tensor
+        Output tensor of shape (batch_size, 3*gene_dim), with values in [0, 1].
+        Typically interpreted as gene-specific parameter estimates.
+
+    Notes
+    -----
+    - Dropout rate is fixed at 0.2 across hidden layers.
+    - Sigmoid activation ensures biologically meaningful bounded outputs.
+    - The `CustomizedLinear` layer is key for incorporating biological priors.
+    """
+
     def __init__(self, in_dim, gene_dim, conn=None):
         self.num_genes = gene_dim
         super().__init__()
@@ -233,6 +398,20 @@ class GeneNet(nn.Module):
 
 # ABLATION
 class GeneNetAblation(nn.Module):
+    """
+    GeneNetAblation: Ablation version of GeneNet without connectivity priors.
+
+    Architecture
+    ------------
+    1. Linear(in_dim → gene_dim//2) + BatchNorm + LeakyReLU + Dropout
+    2. Linear(gene_dim//2 → gene_dim) + BatchNorm + LeakyReLU + Dropout
+    3. Linear(gene_dim → gene_dim) + BatchNorm + LeakyReLU + Dropout
+       - No masking; all gene connections are learned freely.
+    4. Linear(gene_dim → 2*gene_dim) + BatchNorm + LeakyReLU + Dropout
+    5. Linear(2*gene_dim → 3*gene_dim) + Sigmoid
+       - Outputs constrained to [0, 1].
+    """
+
     def __init__(self, in_dim, gene_dim, conn=None):
         self.num_genes = gene_dim
         super().__init__()
@@ -258,13 +437,55 @@ class GeneNetAblation(nn.Module):
 
 
 def velo_pred(spliced, unspliced, rates, umax, smax, dt):
-    
+    """
+    Compute RNA velocity predictions for spliced and unspliced transcripts.
+
+    This function uses estimated transcriptional rates (alpha, beta, gamma) to
+    predict the change in spliced and unspliced RNA over a time step `dt`.
+
+    Parameters
+    ----------
+    spliced : np.ndarray or torch.Tensor
+        Current spliced RNA counts, shape (num_cells, num_genes).
+    unspliced : np.ndarray or torch.Tensor
+        Current unspliced RNA counts, shape (num_cells, num_genes).
+    rates : np.ndarray or torch.Tensor
+        Estimated RNA kinetic rates of shape (num_cells, 3*num_genes):
+        - rates[:, 0:num_genes] → alpha (transcription rate)
+        - rates[:, num_genes:2*num_genes] → beta (splicing rate)
+        - rates[:, 2*num_genes:3*num_genes] → gamma (degradation rate)
+    umax : float or array-like
+        Scaling factor for unspliced RNA rates (alpha).
+    smax : float or array-like
+        Scaling factor for spliced RNA rates (beta and gamma).
+    dt : float
+        Time step for velocity integration.
+
+    Returns
+    -------
+    pred_spliced : same type as input
+        Predicted spliced RNA after time step dt.
+    pred_unspliced : same type as input
+        Predicted unspliced RNA after time step dt.
+    alpha : array
+        Scaled transcription rate per gene.
+    beta : array
+        Scaled splicing rate per gene.
+    gamma : array
+        Scaled degradation rate per gene.
+    vel : array
+        Spliced RNA velocity (change over dt).
+    vel_u : array
+        Unspliced RNA velocity (change over dt).
+    """
+
     num_genes = len(spliced[0])
 
     alpha = rates[:,0:num_genes]
     beta = rates[:,num_genes:2*num_genes]
     gamma = rates[:,2*num_genes:3*num_genes]
 
+    # Scale rates according to maximum observed counts
     alpha = alpha * umax
     beta = beta * smax
     gamma = gamma / smax
@@ -280,9 +501,35 @@ def velo_pred(spliced, unspliced, rates, umax, smax, dt):
 
 def cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices):
     """
-    Return:
-    list of cosine distance and a list of the index of the next cell
+    Compute cosine similarity between predicted RNA velocity vectors and neighbors.
+
+    This function compares the predicted velocity (change from current to predicted
+    spliced/unspliced RNA) of each cell with the vectors connecting the cell to 
+    its neighbors, returning a measure of alignment.
+
+    Parameters
+    ----------
+    unspliced : torch.Tensor
+        Current unspliced RNA counts, shape (num_cells, num_genes).
+    spliced : torch.Tensor
+        Current spliced RNA counts, shape (num_cells, num_genes).
+    pred_unspliced : torch.Tensor
+        Predicted unspliced RNA counts, same shape as `unspliced`.
+    pred_spliced : torch.Tensor
+        Predicted spliced RNA counts, same shape as `spliced`.
+    indices : torch.Tensor
+        Neighbor indices array, typically from a k-nearest neighbors graph.
+        Shape: (num_cells, k_neighbors). `indices[i,j]` is the j-th neighbor of cell i.
+
+    Returns
+    -------
+    1 - cosine_max : torch.Tensor
+        Tensor of shape (num_cells,) containing 1 minus the maximum cosine similarity
+        between the predicted velocity vector of each cell and the vectors to its neighbors.
+        This can be interpreted as a distance or misalignment measure: smaller values 
+        indicate better alignment of predicted velocity with neighbor directions.
     """
+
     uv, sv = pred_unspliced-unspliced, pred_spliced-spliced # Velocity from (unsplice, splice) to (unsplice_predict, splice_predict)
     unv, snv = unspliced[indices.T[1:]] - unspliced, spliced[indices.T[1:]] - spliced # Velocity from (unsplice, splice) to its neighbors
 
@@ -297,9 +544,38 @@ def cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
 
 def nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices, vel, vel_u):
     """
-    Return:
-    list of cosine distance and a list of the index of the next cell
+    Compute the sum of cosine similarities between predicted RNA velocity vectors 
+    and the velocities of neighboring cells.
+
+    This function compares each cell's predicted velocity (from current to predicted
+    spliced/unspliced RNA) with the velocity vectors of its neighbors, returning the 
+    total alignment as a sum of cosine similarities.
+
+    Parameters
+    ----------
+    unspliced : torch.Tensor
+        Current unspliced RNA counts, shape (num_cells, num_genes).
+    spliced : torch.Tensor
+        Current spliced RNA counts, shape (num_cells, num_genes).
+    pred_unspliced : torch.Tensor
+        Predicted unspliced RNA counts, same shape as `unspliced`.
+    pred_spliced : torch.Tensor
+        Predicted spliced RNA counts, same shape as `spliced`.
+    indices : torch.Tensor
+        Neighbor indices array (typically from k-nearest neighbors graph).
+        Shape: (num_cells, k_neighbors). `indices[i,j]` is the j-th neighbor of cell i.
+    vel : torch.Tensor
+        Predicted spliced RNA velocities, shape (num_cells, num_genes).
+    vel_u : torch.Tensor
+        Predicted unspliced RNA velocities, shape (num_cells, num_genes).
+
+    Returns
+    -------
+    cosine_sum : torch.Tensor
+        Scalar tensor representing the sum of cosine similarities between each 
+        cell's predicted velocity and the velocity vectors of its neighbors.
     """
+
     uv, sv = pred_unspliced-unspliced, pred_spliced-spliced # Velocity from (unsplice, splice) to (unsplice_predict, splice_predict)
     unv, snv = vel_u[indices.T[1:]], vel[indices.T[1:]] # Velocity from (unsplice, splice) to its neighbors
 
@@ -312,6 +588,29 @@ def nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indi
 
 
 def adj_velocity(data, velocity, indices):
+    """
+    Compute adjacency-adjusted velocities by averaging over neighbors.
+
+    This function smooths RNA velocity estimates by replacing each cell's 
+    velocity with the mean velocity of its neighbors. It helps reduce noise 
+    and improves velocity consistency across similar cells.
+
+    Parameters
+    ----------
+    data : AnnData or object
+        Single-cell data object. Only `n_obs` (number of cells) is used.
+    velocity : torch.Tensor
+        Original velocity tensor of shape (num_cells, num_genes), e.g., spliced or unspliced velocities.
+    indices : array-like or torch.Tensor
+        Neighbor indices array (typically from a k-nearest neighbors graph). 
+        `indices[j]` contains the indices of neighbors for cell j.
+
+    Returns
+    -------
+    adj_vel : torch.Tensor
+        Adjacency-adjusted velocity tensor of the same shape as `velocity`,
+        where each cell's velocity is replaced by the mean of its neighbors' velocities.
+    """
     
     adj_vel = velocity
 
@@ -324,6 +623,54 @@ def adj_velocity(data, velocity, indices):
 
 
 def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25):
+    """
+    Train a GeneNet model to predict RNA kinetic rates.
+
+    This function performs mini-batch training of GeneNet to predict transcriptional kinetics (alpha, beta, gamma).
+    The loss is based on cosine similarity between predicted RNA velocities and neighborhood structure.
+
+    Parameters
+    ----------
+    num_epochs : int
+        Maximum number of training epochs.
+    data : AnnData
+        Single-cell RNA dataset containing layers 'Ms' (spliced) and 'Mu' (unspliced),
+        and embeddings in `data.obsm[embed_basis]`.
+    embed_basis : str
+        Key in `data.obsm` containing cell embeddings for training.
+    genenet : nn.Module
+        PyTorch GeneNet model that predicts kinetic rates.
+    device : str or torch.device
+        Device for training ('cpu' or 'cuda').
+    optimizer : torch.optim.Optimizer
+        Optimizer used for training the GeneNet model.
+    patience : int, optional (default=10)
+        Number of epochs to wait for improvement before early stopping.
+    num_nbrs : int, optional (default=30)
+        Number of nearest neighbors for computing cosine similarity loss.
+    dt : float, optional (default=0.3)
+        Time step used in velocity prediction.
+    batch : float, optional (default=0.25)
+        Fraction of cells to sample per mini-batch.
+
+    Returns
+    -------
+    None
+        The function updates `data.layers` with the predicted velocities and kinetic rates:
+        - "velocity_u": unspliced RNA velocity
+        - "velocity": spliced RNA velocity
+        - "alpha", "beta", "gamma": predicted kinetic rates
+
+    Notes
+    -----
+    - A random subset of cells is sampled each epoch according to `batch`.
+    - Nearest neighbors are computed in the embedding space (`embed_basis`) to define
+      the cosine similarity loss.
+    - Early stopping is implemented based on `patience`.
+    - After training, predictions are computed for all cells in `data`.
+    - The function ensures `umax` and `smax` are at least 1 to prevent division by zero.
+    """
+
     umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
     smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
     umax[umax == 0] = 1
@@ -336,6 +683,7 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
     with trange(num_epochs) as pbar:
         for epoch in pbar:
             
+            # Subsample cells for mini-batch training
             subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
             subsample = data[subsample_idx, :]
 
@@ -351,6 +699,7 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
 
             outputs = genenet(latent)
 
+            # Predict RNA velocities
             pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
 
             cosim = cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
@@ -363,6 +712,7 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
                 logging.warning("NaN or Inf detected in loss, exiting")
                 break
 
+            # Early stopping
             if loss < best_loss or best_loss == -1:
                 best_net = genenet.state_dict()
                 best_loss = loss
@@ -373,12 +723,14 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
             if imp_counter > patience:
                 logging.info("Early stopping triggered")
                 break
-                    
+
+            # Backpropagation 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             pbar.set_postfix(loss=loss.item())
 
+    # Load best model
     genenet.load_state_dict(best_net)
 
     spliced = torch.tensor(data.layers['Ms'], dtype=torch.float32).to(device)
@@ -398,6 +750,45 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
 
 
 def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbrs=30, dt=0.3, batch=0.25):
+    """
+    Fine-tune training GeneNet model using neighbor-based cosine similarity loss.
+
+    This function fine-tunes the GeneNet model to predict RNA kinetic rates by aligning
+    predicted velocities with the velocities of neighboring cells. The loss is
+    defined as the negative sum of cosine similarities between a cell's predicted
+    velocity and its neighbors' velocities.
+
+    Parameters
+    ----------
+    num_epochs : int
+        Maximum number of training epochs.
+    data : AnnData
+        Single-cell RNA dataset containing layers 'Ms' (spliced) and 'Mu' (unspliced),
+        and embeddings in `data.obsm[embed_basis]`.
+    embed_basis : str
+        Key in `data.obsm` containing cell embeddings for training.
+    genenet : nn.Module
+        PyTorch GeneNet model that predicts kinetic rates.
+    device : str or torch.device
+        Device for training ('cpu' or 'cuda').
+    optimizer : torch.optim.Optimizer
+        Optimizer used for training the GeneNet model.
+    num_nbrs : int, optional (default=30)
+        Number of nearest neighbors to compute neighbor-based loss.
+    dt : float, optional (default=0.3)
+        Time step used in velocity prediction.
+    batch : float, optional (default=0.25)
+        Fraction of cells to sample per mini-batch.
+
+    Returns
+    -------
+    None
+        The function updates `data.layers` with the predicted velocities and kinetic rates:
+        - "velocity_u": unspliced RNA velocity
+        - "velocity": spliced RNA velocity (neighbor-averaged)
+        - "alpha", "beta", "gamma": predicted kinetic rates
+    """
+
     umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
     smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
     umax[umax == 0] = 1
