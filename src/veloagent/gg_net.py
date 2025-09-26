@@ -576,8 +576,12 @@ def nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indi
         cell's predicted velocity and the velocity vectors of its neighbors.
     """
 
-    uv, sv = pred_unspliced-unspliced, pred_spliced-spliced # Velocity from (unsplice, splice) to (unsplice_predict, splice_predict)
-    unv, snv = vel_u[indices.T[1:]], vel[indices.T[1:]] # Velocity from (unsplice, splice) to its neighbors
+    #uv, sv = pred_unspliced-unspliced, pred_spliced-spliced # Velocity from (unsplice, splice) to (unsplice_predict, splice_predict)
+    uv  = F.normalize(pred_unspliced-unspliced, dim=-1)
+    sv  = F.normalize(pred_spliced-spliced, dim=-1)
+    #unv, snv = vel_u[indices.T[1:]], vel[indices.T[1:]] # Velocity from (unsplice, splice) to its neighbors
+    unv = F.normalize(vel_u[indices.T[1:]], dim=-1)
+    snv = F.normalize(vel[indices.T[1:]], dim=-1)
 
     eps = 1e-12
     den = torch.sqrt(unv**2 + snv**2 + eps) * torch.sqrt(uv**2 + sv**2 + eps)
@@ -616,7 +620,7 @@ def adj_velocity(data, velocity, indices):
 
     for j in range(data.n_obs):
         vel_n = velocity[indices[j][:]]
-        vel_n = vel_n.mean(dim=0)
+        vel_n = 0.7 * velocity[j] + 0.3 * vel_n.mean(dim=0)
         adj_vel[j] = vel_n
 
     return adj_vel
@@ -749,7 +753,7 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
     logging.info("Training complete")
 
 
-def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbrs=30, dt=0.3, batch=0.25):
+def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbrs=30, dt=0.3, batch=0.25, lambda_nbr = 0.2):
     """
     Fine-tune training GeneNet model using neighbor-based cosine similarity loss.
 
@@ -815,8 +819,10 @@ def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbr
         pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
 
         cosim = nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices, velocity, velocity_u)
-        
-        gene_loss = -cosim/len(subsample)
+
+        cosim_self = cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
+
+        gene_loss = torch.sum(cosim_self) - lambda_nbr * cosim / indices.shape[1]
 
         loss = gene_loss
 
