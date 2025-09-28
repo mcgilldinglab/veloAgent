@@ -620,7 +620,7 @@ def adj_velocity(data, velocity, indices):
 
     for j in range(data.n_obs):
         vel_n = velocity[indices[j][:]]
-        vel_n = 0.7 * velocity[j] + 0.3 * vel_n.mean(dim=0)
+        vel_n = 0.8 * velocity[j] + 0.2 * vel_n.mean(dim=0)
         adj_vel[j] = vel_n
 
     return adj_vel
