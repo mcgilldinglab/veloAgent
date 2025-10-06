@@ -487,11 +487,13 @@ def velo_pred(spliced, unspliced, rates, umax, smax, dt):
 
     # Scale rates according to maximum observed counts
     alpha = alpha * umax
-    beta = beta * smax
-    gamma = gamma / smax
+    beta = beta * (smax/umax)
 
-    vel_u = (alpha - beta*unspliced)*dt
-    vel = (beta*unspliced - gamma*spliced)*dt
+    unspliced_norm = unspliced / umax
+    spliced_norm = spliced / smax
+
+    vel_u = (alpha - beta*unspliced_norm)*dt*umax
+    vel = (beta*unspliced_norm - gamma*spliced_norm)*dt*smax
     
     pred_unspliced = unspliced + vel_u
     pred_spliced = spliced + vel
