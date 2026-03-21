@@ -56,5 +56,16 @@ For local development:
 
 The `pip` route requires a compatible Python version in advance. The project metadata currently targets Python `3.8.19` through `<3.9`.
 
+## STRINGdb Data
+Users must download the required STRINGdb files for their species separately; these files are not bundled in the repository. STRINGdb downloads are available at [STRING](https://string-db.org/).
+
+Download the three STRINGdb files whose filenames contain the following substrings:
+
+- `protein.links.detailed`
+- `protein.aliases`
+- `protein.info`
+
+Place the downloaded files under the appropriate species directory in `src/veloagent/conn_mat/species_name`.
+
 ## Contact
 [Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)
