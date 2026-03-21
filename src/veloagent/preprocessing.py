@@ -5,7 +5,7 @@ import anndata
 from scipy.sparse import csr_matrix
 
 
-def preprocess(data, num_genes=2000, min_count=20):
+def preprocess(data, num_genes=2000, min_count=20, log_norm=True):
     """
     Preprocess an AnnData object for RNA velocity analysis and VAE training.
 
@@ -41,7 +41,9 @@ def preprocess(data, num_genes=2000, min_count=20):
     data.layers['unspliced'] = csr_matrix(data.layers['unspliced'].astype(np.float32))
 
     # Filter lowly expressed genes, normalize counts, and select HVGs
-    scv.pp.filter_and_normalize(data, min_shared_counts=min_count, n_top_genes=num_genes)
+
+    if log_norm:
+        scv.pp.filter_and_normalize(data, min_shared_counts=min_count, n_top_genes=num_genes)
 
     # Replace any NaN values in main expression matrix
     data.X = np.nan_to_num(data.X, nan=0)

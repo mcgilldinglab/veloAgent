@@ -5,7 +5,6 @@ import os
 import numpy as np
 import scanpy as sc
 import math
-from torch_geometric.nn import Sequential
 from tqdm import trange
 import scvelo as scv
 
@@ -507,7 +506,7 @@ def get_embedding(adata, vae_model, device):
     _,_,_,_,z = vae_model(u, s, edge_i)
 
     # Store embeddings in AnnData
-    adata.obsm["cell_embed"] =  z.detach().numpy()
+    adata.obsm["cell_embed"] =  z.detach().cpu().numpy()
 
     # Recompute neighbors in the new embedding space
     sc.pp.neighbors(adata, n_neighbors=30, use_rep="cell_embed")

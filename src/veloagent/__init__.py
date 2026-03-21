@@ -21,7 +21,9 @@ from .gg_net import (
     nbr_cosine_similarity,
     adj_velocity,
     train_gg,
+    train_gg_counts,
     train_nbr,
+    train_nbr_counts
 )
 
 from .abm import (

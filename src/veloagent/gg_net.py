@@ -9,7 +9,6 @@ from scipy.sparse import csr_matrix
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm, trange
 
-
 logging.basicConfig(level=logging.INFO)
 
 def load_protein_paths(species, base):
@@ -49,7 +48,7 @@ def load_protein_paths(species, base):
             f"{base}/human/9606.protein.links.v12.0.txt"]
 
 
-def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
+def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname, confidence=False, conf_threshold=400):
     """
     Create a gene–gene connectivity matrix based on protein–protein interactions (PPIs).
 
@@ -71,6 +70,12 @@ def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
         Path to STRING protein–protein interaction links file (e.g., `*.protein.links.v12.0.txt`).
     varname : str
         Column name in `data.var` used as gene identifiers (typically `"index"` or `"gene_name"`).
+    confidence: bool
+        Controls whether to use confidence score (combined score) to filter out less likely 
+        interactions when building connectivity matrix.
+    conf_threshold: int
+        Threshold for confidence (combined) score. Interactions greater or equal to input will be 
+        included in construction of connectivity matrix.
 
     Returns
     -------
@@ -146,6 +151,8 @@ def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
     proteins = proteins[['gene', 'protein_id']]
     
     gpair = pd.read_csv(gene_conn, sep=' ')
+    if confidence:
+        gpair = gpair[gpair['combined_score'] >= conf_threshold].reset_index(drop=True)
         
     # prune relevant connections
     protein_set = set(alias['protein_id'])
@@ -173,13 +180,13 @@ def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname):
             # Connect it to a non-empty row (you can choose a method for this)
             dense_mat[i,:] = 1  # Set the row's empty columns to 1
             dense_mat[:,i] = 1  # Set the column's empty columns to 1
-
     np.fill_diagonal(dense_mat, 1)
     
     return dense_mat
 
 
 # Define custom autograd function for masked connection.
+
 class CustomizedLinearFunction(torch.autograd.Function):
     """
     A custom autograd function that performs a masked linear transformation.
@@ -371,7 +378,6 @@ class GeneNet(nn.Module):
     - Sigmoid activation ensures biologically meaningful bounded outputs.
     - The `CustomizedLinear` layer is key for incorporating biological priors.
     """
-
     def __init__(self, in_dim, gene_dim, conn=None):
         self.num_genes = gene_dim
         super().__init__()
@@ -397,6 +403,7 @@ class GeneNet(nn.Module):
 
 
 # ABLATION
+
 class GeneNetAblation(nn.Module):
     """
     GeneNetAblation: Ablation version of GeneNet without connectivity priors.
@@ -411,7 +418,6 @@ class GeneNetAblation(nn.Module):
     5. Linear(2*gene_dim → 3*gene_dim) + Sigmoid
        - Outputs constrained to [0, 1].
     """
-
     def __init__(self, in_dim, gene_dim, conn=None):
         self.num_genes = gene_dim
         super().__init__()
@@ -478,22 +484,18 @@ def velo_pred(spliced, unspliced, rates, umax, smax, dt):
     vel_u : array
         Unspliced RNA velocity (change over dt).
     """
-
     num_genes = len(spliced[0])
 
     alpha = rates[:,0:num_genes]
     beta = rates[:,num_genes:2*num_genes]
     gamma = rates[:,2*num_genes:3*num_genes]
 
-    # Scale rates according to maximum observed counts
     alpha = alpha * umax
-    beta = beta * (smax/umax)
+    beta = beta * smax
+    gamma = gamma / smax
 
-    unspliced_norm = unspliced / umax
-    spliced_norm = spliced / smax
-
-    vel_u = (alpha - beta*unspliced_norm)*dt*umax
-    vel = (beta*unspliced_norm - gamma*spliced_norm)*dt*smax
+    vel_u = (alpha - beta*unspliced)*dt
+    vel = (beta*unspliced - gamma*spliced)*dt
     
     pred_unspliced = unspliced + vel_u
     pred_spliced = spliced + vel
@@ -577,13 +579,8 @@ def nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indi
         Scalar tensor representing the sum of cosine similarities between each 
         cell's predicted velocity and the velocity vectors of its neighbors.
     """
-
-    #uv, sv = pred_unspliced-unspliced, pred_spliced-spliced # Velocity from (unsplice, splice) to (unsplice_predict, splice_predict)
-    uv  = F.normalize(pred_unspliced-unspliced, dim=-1)
-    sv  = F.normalize(pred_spliced-spliced, dim=-1)
-    #unv, snv = vel_u[indices.T[1:]], vel[indices.T[1:]] # Velocity from (unsplice, splice) to its neighbors
-    unv = F.normalize(vel_u[indices.T[1:]], dim=-1)
-    snv = F.normalize(vel[indices.T[1:]], dim=-1)
+    uv, sv = pred_unspliced-unspliced, pred_spliced-spliced # Velocity from (unsplice, splice) to (unsplice_predict, splice_predict)
+    unv, snv = vel_u[indices.T[1:]], vel[indices.T[1:]] # Velocity from (unsplice, splice) to its neighbors
 
     eps = 1e-12
     den = torch.sqrt(unv**2 + snv**2 + eps) * torch.sqrt(uv**2 + sv**2 + eps)
@@ -617,7 +614,6 @@ def adj_velocity(data, velocity, indices):
         Adjacency-adjusted velocity tensor of the same shape as `velocity`,
         where each cell's velocity is replaced by the mean of its neighbors' velocities.
     """
-    
     adj_vel = velocity
 
     for j in range(data.n_obs):
@@ -628,7 +624,7 @@ def adj_velocity(data, velocity, indices):
     return adj_vel
 
 
-def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25):
+def train_gg(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25, device='cpu'):
     """
     Train a GeneNet model to predict RNA kinetic rates.
 
@@ -658,6 +654,8 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
         Time step used in velocity prediction.
     batch : float, optional (default=0.25)
         Fraction of cells to sample per mini-batch.
+    device : str, optional (default="cpu")
+        Device used for training
 
     Returns
     -------
@@ -681,6 +679,8 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
     smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
     umax[umax == 0] = 1
     smax[smax == 0] = 1
+    umax = umax.to(device)
+    smax = smax.to(device)
 
     best_net = None
     best_loss = -1
@@ -697,14 +697,14 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
             spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)
             unspliced = torch.tensor(subsample.layers['Mu'], dtype=torch.float32).to(device)
 
-            nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(latent)
+            nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(latent.detach().cpu().numpy())
 
-            distances, indices = nbrs.kneighbors(latent)
+            distances, indices = nbrs.kneighbors(latent.detach().cpu().numpy())
 
             indices = torch.tensor(indices)
 
             outputs = genenet(latent)
-
+            
             # Predict RNA velocities
             pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
 
@@ -729,8 +729,7 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
             if imp_counter > patience:
                 logging.info("Early stopping triggered")
                 break
-
-            # Backpropagation 
+                    
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -746,16 +745,16 @@ def train_gg(num_epochs, data, embed_basis, genenet, device, optimizer, patience
     with torch.no_grad():
         rate_vals = genenet(latent)
         pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, rate_vals, umax, smax, dt)
-        data.layers["velocity_u"] = velocity_u.detach().numpy()
-        data.layers["velocity"] = velocity.detach().numpy()
-        data.layers["alpha"] = alpha.detach().numpy()
-        data.layers["beta"] = beta.detach().numpy()
-        data.layers["gamma"] = gamma.detach().numpy()
+        data.layers["velocity_u"] = velocity_u.detach().cpu().numpy()
+        data.layers["velocity"] = velocity.detach().cpu().numpy()
+        data.layers["alpha"] = alpha.detach().cpu().numpy()
+        data.layers["beta"] = beta.detach().cpu().numpy()
+        data.layers["gamma"] = gamma.detach().cpu().numpy()
     
     logging.info("Training complete")
 
 
-def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbrs=30, dt=0.3, batch=0.25, lambda_nbr = 0.2):
+def train_nbr(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt=0.3, batch=0.25, device="cpu", tau_nbr=0.2):
     """
     Fine-tune training GeneNet model using neighbor-based cosine similarity loss.
 
@@ -785,6 +784,10 @@ def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbr
         Time step used in velocity prediction.
     batch : float, optional (default=0.25)
         Fraction of cells to sample per mini-batch.
+    device : str, optional (default="cpu")
+        Device used for training
+    tau_nbr : float, optional (default=0.2)
+        Regularization strength of nbr loss
 
     Returns
     -------
@@ -794,64 +797,312 @@ def train_nbr(num_epochs, data, embed_basis, genenet, device, optimizer, num_nbr
         - "velocity": spliced RNA velocity (neighbor-averaged)
         - "alpha", "beta", "gamma": predicted kinetic rates
     """
-
+    
     umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
     smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
     umax[umax == 0] = 1
     smax[smax == 0] = 1
+    umax = umax.to(device)
+    smax = smax.to(device)
     
-    for i in range(num_epochs):
+    with trange(num_epochs) as pbar:
+        for i in pbar:
+            # Subsample cells for mini-batch training
+            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            subsample = data[subsample_idx, :]
+
+            latent = torch.tensor(subsample.obsm[embed_basis], dtype=torch.float32).to(device)
+            spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)
+            unspliced = torch.tensor(subsample.layers['Mu'], dtype=torch.float32).to(device)
+            velocity = torch.tensor(subsample.layers['velocity'])
+
+            nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(latent.detach().cpu().numpy())
+
+            distances, indices = nbrs.kneighbors(latent.detach().cpu().numpy())
+
+            indices = torch.tensor(indices)
+
+            outputs = genenet(latent)
+            
+            # Predict RNA velocities
+            pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
+
+            cosim = nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices, velocity, velocity_u)
+
+            cosim_self = cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
+
+            gene_loss = torch.sum(cosim_self) - tau_nbr * cosim / indices.shape[1]
+
+            loss = gene_loss
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                logging.warning("NaN or Inf detected in loss, exiting")
+                break
         
-        subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
-        subsample = data[subsample_idx, :]
-
-        latent = torch.tensor(subsample.obsm[embed_basis], dtype=torch.float32).to(device)
-        spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)
-        unspliced = torch.tensor(subsample.layers['Mu'], dtype=torch.float32).to(device)
-        velocity = torch.tensor(subsample.layers['velocity'])
-
-        nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(latent)
-
-        distances, indices = nbrs.kneighbors(latent)
-
-        indices = torch.tensor(indices)
-
-        outputs = genenet(latent)
-        
-        pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
-
-        cosim = nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices, velocity, velocity_u)
-
-        cosim_self = cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
-
-        gene_loss = torch.sum(cosim_self) - lambda_nbr * cosim / indices.shape[1]
-
-        loss = gene_loss
-
-        if torch.isnan(loss) or torch.isinf(loss):
-            logging.warning("NaN or Inf detected in loss, exiting")
-            break
-    
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
     spliced = torch.tensor(data.layers['Ms'], dtype=torch.float32).to(device)
     unspliced = torch.tensor(data.layers['Mu'], dtype=torch.float32).to(device)
     latent = torch.tensor(data.obsm[embed_basis], dtype=torch.float32).to(device)
 
-    nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(latent)
-    distances, indices = nbrs.kneighbors(latent)
+    nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(latent.detach().cpu().numpy())
+    distances, indices = nbrs.kneighbors(latent.detach().cpu().numpy())
     indices = torch.tensor(indices)
     
     with torch.no_grad():
         rate_vals = genenet(latent)
         pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, rate_vals, umax, smax, dt)
         velocity = adj_velocity(data, velocity, indices)
-        data.layers["velocity_u"] = velocity_u.detach().numpy()
-        data.layers["velocity"] = velocity.detach().numpy()
-        data.layers["alpha"] = alpha.detach().numpy()
-        data.layers["beta"] = beta.detach().numpy()
-        data.layers["gamma"] = gamma.detach().numpy()
+        data.layers["velocity_u"] = velocity_u.detach().cpu().numpy()
+        data.layers["velocity"] = velocity.detach().cpu().numpy()
+        data.layers["alpha"] = alpha.detach().cpu().numpy()
+        data.layers["beta"] = beta.detach().cpu().numpy()
+        data.layers["gamma"] = gamma.detach().cpu().numpy()
+        
+    logging.info("Training complete")
+
+
+def train_gg_counts(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25, device='cpu'):
+    """
+    Train a GeneNet model to predict RNA kinetic rates.
+
+    This function performs mini-batch training of GeneNet to predict transcriptional kinetics (alpha, beta, gamma).
+    The loss is based on cosine similarity between predicted RNA velocities and neighborhood structure.
+
+    Parameters
+    ----------
+    num_epochs : int
+        Maximum number of training epochs.
+    data : AnnData
+        Single-cell RNA dataset containing layers 'Ms' (spliced) and 'Mu' (unspliced),
+        and embeddings in `data.obsm[embed_basis]`.
+    embed_basis : str
+        Key in `data.obsm` containing cell embeddings for training.
+    genenet : nn.Module
+        PyTorch GeneNet model that predicts kinetic rates.
+    device : str or torch.device
+        Device for training ('cpu' or 'cuda').
+    optimizer : torch.optim.Optimizer
+        Optimizer used for training the GeneNet model.
+    patience : int, optional (default=10)
+        Number of epochs to wait for improvement before early stopping.
+    num_nbrs : int, optional (default=30)
+        Number of nearest neighbors for computing cosine similarity loss.
+    dt : float, optional (default=0.3)
+        Time step used in velocity prediction.
+    batch : float, optional (default=0.25)
+        Fraction of cells to sample per mini-batch.
+    device : str, optional (default="cpu")
+        Device used for training
+
+    Returns
+    -------
+    None
+        The function updates `data.layers` with the predicted velocities and kinetic rates:
+        - "velocity_u": unspliced RNA velocity
+        - "velocity": spliced RNA velocity
+        - "alpha", "beta", "gamma": predicted kinetic rates
+
+    Notes
+    -----
+    - A random subset of cells is sampled each epoch according to `batch`.
+    - Nearest neighbors are computed in the embedding space (`embed_basis`) to define
+      the cosine similarity loss.
+    - Early stopping is implemented based on `patience`.
+    - After training, predictions are computed for all cells in `data`.
+    - The function ensures `umax` and `smax` are at least 1 to prevent division by zero.
+    """
+
+    umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
+    smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
+    umax[umax == 0] = 1
+    smax[smax == 0] = 1
+    umax = umax.to(device)
+    smax = smax.to(device)
+
+    best_net = None
+    best_loss = -1
+    imp_counter = 0
+    
+    with trange(num_epochs) as pbar:
+        for epoch in pbar:
+            
+            # Subsample cells for mini-batch training
+            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            subsample = data[subsample_idx, :]
+
+            spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)
+            unspliced = torch.tensor(subsample.layers['Mu'], dtype=torch.float32).to(device)
+
+            # shape: [n_cells, 2 * n_genes]
+            genenet_in = torch.cat([unspliced, spliced], dim=1)
+
+            nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(genenet_in.detach().cpu().numpy())
+
+            distances, indices = nbrs.kneighbors(genenet_in.detach().cpu().numpy())
+
+            indices = torch.tensor(indices, device=device)
+
+            outputs = genenet(genenet_in)
+            
+            # Predict RNA velocities
+            pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
+
+            cosim = cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
+            
+            gene_loss = torch.sum(cosim)
+
+            loss = gene_loss
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                logging.warning("NaN or Inf detected in loss, exiting")
+                break
+
+            # Early stopping
+            if loss < best_loss or best_loss == -1:
+                best_net = genenet.state_dict()
+                best_loss = loss
+                imp_counter = 0
+            else:
+                imp_counter += 1
+
+            if imp_counter > patience:
+                logging.info("Early stopping triggered")
+                break
+                    
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            pbar.set_postfix(loss=loss.item())
+
+    # Load best model
+    genenet.load_state_dict(best_net)
+
+    spliced = torch.tensor(data.layers['Ms'], dtype=torch.float32).to(device)
+    unspliced = torch.tensor(data.layers['Mu'], dtype=torch.float32).to(device)
+
+    genenet_in = torch.cat([unspliced, spliced], dim=1)
+    
+    with torch.no_grad():
+        rate_vals = genenet(genenet_in)
+        pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, rate_vals, umax, smax, dt)
+        data.layers["velocity_u"] = velocity_u.detach().cpu().numpy()
+        data.layers["velocity"] = velocity.detach().cpu().numpy()
+        data.layers["alpha"] = alpha.detach().cpu().numpy()
+        data.layers["beta"] = beta.detach().cpu().numpy()
+        data.layers["gamma"] = gamma.detach().cpu().numpy()
+    
+    logging.info("Training complete")
+
+
+def train_nbr_counts(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt=0.3, batch=0.25, device="cpu", tau_nbr=0.2):
+    """
+    Fine-tune training GeneNet model using neighbor-based cosine similarity loss.
+
+    This function fine-tunes the GeneNet model to predict RNA kinetic rates by aligning
+    predicted velocities with the velocities of neighboring cells. The loss is
+    defined as the negative sum of cosine similarities between a cell's predicted
+    velocity and its neighbors' velocities.
+
+    Parameters
+    ----------
+    num_epochs : int
+        Maximum number of training epochs.
+    data : AnnData
+        Single-cell RNA dataset containing layers 'Ms' (spliced) and 'Mu' (unspliced),
+        and embeddings in `data.obsm[embed_basis]`.
+    embed_basis : str
+        Key in `data.obsm` containing cell embeddings for training.
+    genenet : nn.Module
+        PyTorch GeneNet model that predicts kinetic rates.
+    device : str or torch.device
+        Device for training ('cpu' or 'cuda').
+    optimizer : torch.optim.Optimizer
+        Optimizer used for training the GeneNet model.
+    num_nbrs : int, optional (default=30)
+        Number of nearest neighbors to compute neighbor-based loss.
+    dt : float, optional (default=0.3)
+        Time step used in velocity prediction.
+    batch : float, optional (default=0.25)
+        Fraction of cells to sample per mini-batch.
+    device : str, optional (default="cpu")
+        Device used for training
+    tau_nbr : float, optional (default=0.2)
+        Regularization strength of nbr loss
+
+    Returns
+    -------
+    None
+        The function updates `data.layers` with the predicted velocities and kinetic rates:
+        - "velocity_u": unspliced RNA velocity
+        - "velocity": spliced RNA velocity (neighbor-averaged)
+        - "alpha", "beta", "gamma": predicted kinetic rates
+    """
+    
+    umax = torch.max(torch.tensor(data.layers['Mu']), dim=0)[0]
+    smax = torch.max(torch.tensor(data.layers['Ms']), dim=0)[0]
+    umax[umax == 0] = 1
+    smax[smax == 0] = 1
+    umax = umax.to(device)
+    smax = smax.to(device)
+    
+    with trange(num_epochs) as pbar:
+        for i in pbar:
+            # Subsample cells for mini-batch training
+            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            subsample = data[subsample_idx, :]
+
+            spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)
+            unspliced = torch.tensor(subsample.layers['Mu'], dtype=torch.float32).to(device)
+            velocity = torch.tensor(subsample.layers['velocity'])
+
+            genenet_in = torch.cat([unspliced, spliced], dim=1)
+
+            nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(genenet_in.detach().cpu().numpy())
+
+            distances, indices = nbrs.kneighbors(genenet_in.detach().cpu().numpy())
+
+            indices = torch.tensor(indices, device=device)
+
+            outputs = genenet(genenet_in)
+            
+            # Predict RNA velocities
+            pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, outputs, umax, smax, dt)
+
+            cosim = nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices, velocity, velocity_u)
+
+            cosim_self = cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
+
+            gene_loss = torch.sum(cosim_self) - tau_nbr * cosim / indices.shape[1]
+
+            loss = gene_loss
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                logging.warning("NaN or Inf detected in loss, exiting")
+                break
+        
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    spliced = torch.tensor(data.layers['Ms'], dtype=torch.float32).to(device)
+    unspliced = torch.tensor(data.layers['Mu'], dtype=torch.float32).to(device)
+    genenet_in = torch.cat([unspliced, spliced], dim=1)
+
+    nbrs = NearestNeighbors(n_neighbors=num_nbrs, algorithm='ball_tree').fit(genenet_in.detach().cpu().numpy())
+    distances, indices = nbrs.kneighbors(genenet_in.detach().cpu().numpy())
+    indices = torch.tensor(indices)
+    
+    with torch.no_grad():
+        rate_vals = genenet(genenet_in)
+        pred_spliced, pred_unspliced, alpha, beta, gamma, velocity, velocity_u = velo_pred(spliced, unspliced, rate_vals, umax, smax, dt)
+        velocity = adj_velocity(data, velocity, indices)
+        data.layers["velocity_u"] = velocity_u.detach().cpu().numpy()
+        data.layers["velocity"] = velocity.detach().cpu().numpy()
+        data.layers["alpha"] = alpha.detach().cpu().numpy()
+        data.layers["beta"] = beta.detach().cpu().numpy()
+        data.layers["gamma"] = gamma.detach().cpu().numpy()
         
     logging.info("Training complete")

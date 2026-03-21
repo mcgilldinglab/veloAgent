@@ -174,8 +174,6 @@ class CellModel(mesa.Model):
         Minimum observed cell density among all agents.
     max_density : float
         Maximum observed cell density among all agents.
-    tau : float
-        Scaling factor for density-based weighting.
     curr_step : int
         Current simulation step.
     num_steps : int
@@ -209,7 +207,7 @@ class CellModel(mesa.Model):
         Perform synchronous velocity updates for all agents and store results in `adata`.
     """
     
-    def __init__(self, adata, steps, freedom=2, nbr_radius=40, sig_ratio=0.7, max_gene_norm=10.0):
+    def __init__(self, adata, steps, tau=2, nbr_radius=40, sig_ratio=0.7, max_gene_norm=10.0):
         """
         Initialize CellModel.
 
@@ -219,7 +217,7 @@ class CellModel(mesa.Model):
             Single-cell dataset with spatial coordinates and velocity layers.
         steps : int
             Number of steps to simulate per `step()` call.
-        freedom : int, default=2
+        tau : int, default=2
             Exponent for inverse-distance neighbor weighting.
         nbr_radius : float, default=40
             Radius to define neighbors in spatial space.
@@ -231,13 +229,12 @@ class CellModel(mesa.Model):
         self.num_agents = adata.n_obs
         self.adata = adata
         self.num_genes = adata.n_vars
-        self.deg_fred = freedom
+        self.deg_fred = tau
         self.nbr_radius = nbr_radius
         self.sig_ratio = sig_ratio
         self.max_gene_norm = max_gene_norm
         self.min_density = None
         self.max_density = None
-        self.tau = 0.2
         self.curr_step = 0
         self.num_steps = steps
 
@@ -458,20 +455,21 @@ class CellModel(mesa.Model):
         For each agent:
         - Calculate `density_w` as a scaled inverse of its local density relative to the
             minimum and maximum agent densities.
-        - Formula: density_w = 1 - ((agent.density - min_density) / (max_density - min_density)) * tau
+        - Formula: density_w = 1 - ((agent.density - min_density) / (max_density - min_density)) 
         - If all agents have the same density (denominator is zero), assign a uniform weight of 1.0.
 
         These weights reduce the influence of agents in dense regions during velocity updates.
         """
+    
         denom = (self.max_density - self.min_density)
         if denom == 0:
             # All agents same density -> uniform density_w
             for agent in self.schedule.agents:
                 agent.density_w = 1.0  # or some default like 1.0
             return
-    
+        
         for agent in self.schedule.agents:
-            agent.density_w = 1 - ((agent.density - self.min_density) / denom) * self.tau
+            agent.density_w = 1 - ((agent.density - self.min_density) / denom) 
     
     def w_spatial(self):
         """
