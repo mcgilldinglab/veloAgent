@@ -7,7 +7,7 @@ name = "veloagent"
 version = "0.1.0"
 description = "Scalable deep learning and agent-based modeling framework for RNA velocity estimation"
 authors = [
-    { name="Vishvak Raghavan", email="vishvakraghavan@gmail.com" }
+    { name="Vishvak Raghavan", email="vishvakraghavan@gmail.com" },
     { name="Brent Yoon", email="brentyoon10@gmail.com" }
 ]
 readme = "README.md"
