@@ -34,8 +34,8 @@ Unique module for targeted manipulation of RNA velocity vectors, enabling simula
 - Guiding experimental design through in silico cell fate manipulation
 
 ## 📦 Installation
-### Recommended: Conda environment
-This is the recommended installation path.
+### 1️⃣ Create a conda environment with Python 3.10
+conda create -n myvirtenv python=3.10
 
     git clone https://github.com/mcgilldinglab/veloAgent.git
     cd veloAgent
@@ -43,29 +43,64 @@ This is the recommended installation path.
     conda activate veloagent
     pip install -e .
 
-### Alternative: pip installation
-If you already have a compatible Python environment, you can install veloAgent with `pip`.
+### 3️⃣ Install PyTorch separately
+Install PyTorch separately so you can choose the correct CPU or CUDA build for your platform.
 
-    pip install git+https://github.com/mcgilldinglab/veloAgent.git
+For platform-specific CPU/GPU install instructions for PyTorch, see the official PyTorch guide:
+https://pytorch.org/get-started/locally/
 
-For local development:
+### 4️⃣ Install veloAgent directly from GitHub
+```
+git clone https://github.com/mcgilldinglab/veloAgent.git
+cd veloAgent
+pip install .
+```
 
-    git clone https://github.com/mcgilldinglab/veloAgent.git
-    cd veloAgent
-    pip install -e .
+## 🧬 STRING DB setup for GG Net
+For the gene-gene network utilities, users must download STRING DB files manually from:
 
-The `pip` route requires a compatible Python version in advance. The project metadata currently targets Python `3.8.19` through `<3.9`.
+https://string-db.org/cgi/download?sessionId=bXn82hPMr4fT
 
-## STRINGdb Data
-Users must download the required STRINGdb files for their species separately; these files are not bundled in the repository. STRINGdb downloads are available at [STRING](https://string-db.org/).
+You need these three files for the species you plan to use:
 
-Download the three STRINGdb files whose filenames contain the following substrings:
-
-- `protein.links.detailed`
 - `protein.aliases`
+- `protein.links`
 - `protein.info`
 
-Place the downloaded files under the appropriate species directory in `src/veloagent/conn_mat/species_name`.
+At this point, `veloAgent` supports:
+
+- `mouse`
+- `human`
+- `chicken`
+
+These files should be stored under the `base` directory passed to `veloagent.load_protein_paths(species, base)`, inside a subdirectory named after the species.
+
+Example:
+
+```python
+paths = veloagent.load_protein_paths(species="mouse", base="data/conn_mat")
+```
+
+Expected directory layout:
+
+```text
+data/conn_mat/
+  mouse/
+    10090.protein.info.v12.0.txt
+    10090.protein.aliases.v12.0.txt
+    10090.protein.links.v12.0.txt
+  human/
+    9606.protein.info.v12.0.txt
+    9606.protein.aliases.v12.0.txt
+    9606.protein.links.v12.0.txt
+  chicken/
+    9031.protein.info.v12.0.txt
+    9031.protein.aliases.v12.0.txt
+    9031.protein.links.v12.0.txt
+```
+
+## 📄 Release History
+* `0.1.0`: Initial veloAgent workflow.
 
 ## Contact
 [Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)

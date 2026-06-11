@@ -195,7 +195,8 @@ def perturb_score_plt(scores, gene_list):
     scores = scores.copy()
 
     top_25 = scores.sort_values(by='score', ascending=False).head(25)
-    top_25['gene'] = gene_list
+    gene_lookup = dict(zip(scores.index, gene_list))
+    top_25['gene'] = top_25.index.map(gene_lookup)
 
     plt.figure(figsize=(12, 6))
     plt.bar(top_25['gene'], top_25['score'], color='skyblue')

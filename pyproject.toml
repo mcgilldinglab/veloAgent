@@ -11,7 +11,7 @@ authors = [
     { name="Brent Yoon", email="brentyoon10@gmail.com" }
 ]
 readme = "README.md"
-requires-python = ">=3.8.19,<3.9"
+requires-python = ">=3.11.8"
 license = { text="MIT" }
 keywords = ["rna", "velocity", "agent-based", "scRNA-seq"]
 classifiers = [
@@ -28,15 +28,13 @@ dependencies = [
     "mplscience==0.0.7",
     "numpy==1.24.4",
     "pandas==2.0.3",
-    "scanpy==1.9.8",
     "scikit-learn==1.1.3",
+    "scanpy==1.9.8",
     "scipy==1.10.1",
     "scvelo==0.3.2",
     "seaborn==0.13.2",
     "statannotations==0.7.2",
     "statsmodels==0.14.1",
-    "torch==2.2.2",
-    "torchvision==0.17.2",
     "tqdm==4.66.5",
     "veloae @ git+https://github.com/qiaochen/VeloAE.git",
 ]

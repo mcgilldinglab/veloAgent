@@ -5,8 +5,15 @@ import os
 import numpy as np
 import scanpy as sc
 import math
+import copy
 from tqdm import trange
 import scvelo as scv
+from scipy.sparse import issparse
+
+
+def _layer_to_numpy(layer):
+    """Return a dense numpy array for sparse or dense layer inputs."""
+    return layer.toarray() if issparse(layer) else np.asarray(layer)
 
 
 class Encoder(nn.Module):
@@ -336,7 +343,7 @@ def get_vae(adata, z_dim, lr=1e-2):
     
     return vae, optimizer, loss_fn
 
-def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_epochs=1000, batch=0.25, device="cpu", verbose=True):
+def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_epochs=1000, batch=256, device="cpu", verbose=True):
     """
     Train a Variational Autoencoder (VAE) on spliced/unspliced single-cell data
     with neighborhood-aware graph edges.
@@ -359,8 +366,8 @@ def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_e
         Number of epochs with no improvement before early stopping is triggered.
     num_epochs : int, optional (default: 1000)
         Maximum number of training epochs.
-    batch : float, optional (default: 0.25)
-        Proportion of cells per batch (between 0 and 1).
+    batch : int, optional (default: 256)
+        Number of cells per batch.
     device : str, optional (default: "cpu")
         Device to run training on ("cpu" or "cuda").
     verbose : bool, optional (default: True)
@@ -391,15 +398,13 @@ def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_e
         best_loss = -1
         imp_counter = 0
         
-        batch_size = int(math.ceil(adata.n_obs*batch))
+        batch_size = min(adata.n_obs, max(1, int(batch)))
         
         with trange(num_epochs) as pbar:
             for epoch in pbar:
-                tot_loss = 0
+                epoch_loss = 0.0
                 iters = 0
                 shuffled_indices = np.random.permutation(adata.n_obs)
-    
-                loss = 0
                 
                 for batch_idx in range(0, adata.n_obs, batch_size):
                     iters += 1
@@ -410,8 +415,8 @@ def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_e
                     batch_indices = shuffled_indices[batch_idx:end_idx]
                     batch_data = adata[batch_indices, :]
     
-                    s = torch.tensor(batch_data.layers['spliced'].A, dtype=torch.float32).to(device)
-                    u = torch.tensor(batch_data.layers['unspliced'].A, dtype=torch.float32).to(device)
+                    s = torch.tensor(_layer_to_numpy(batch_data.layers['spliced']), dtype=torch.float32).to(device)
+                    u = torch.tensor(_layer_to_numpy(batch_data.layers['unspliced']), dtype=torch.float32).to(device)
                     
                     # Create mapping from global index → local index
                     global_to_local = {g: l for l, g in enumerate(batch_indices)}
@@ -435,12 +440,17 @@ def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_e
                     recon_loss_s = loss_fn(reconstructed_s, s)
                     kl_div = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
                     
-                    loss += recon_loss_s + 0.3*recon_loss_u + kl_div
+                    loss = recon_loss_s + 0.3*recon_loss_u + kl_div
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    epoch_loss += loss.item()
     
                 # early stop test
-                if loss < best_loss or best_loss == -1:
-                    best_vae = vae.state_dict()
-                    best_loss = loss
+                avg_loss = epoch_loss / max(1, iters)
+                if avg_loss < best_loss or best_loss == -1:
+                    best_vae = copy.deepcopy(vae.state_dict())
+                    best_loss = avg_loss
                     imp_counter = 0
                 else:
                     imp_counter += 1
@@ -449,14 +459,8 @@ def train_vae(adata, vae, optimizer, loss_fn, global_nb_indices, patience, num_e
                     if verbose:
                         print("Early stopping triggered")
                     break
-    
-                # backpropagation
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                tot_loss += loss
-                avg_loss = tot_loss/iters
-                pbar.set_postfix(loss=loss.item())
+
+                pbar.set_postfix(loss=avg_loss)
                 
     finally:
         sys.stdout = org_stdout
@@ -492,8 +496,8 @@ def get_embedding(adata, vae_model, device):
         - `adata.obsm["cell_embed"]`: latent embeddings (shape: [n_cells, z_dim])
         - Recomputed neighbors in `adata.uns["neighbors"]` using the latent space
     """
-    s = torch.tensor(adata.layers['spliced'].A, dtype=torch.float32).to(device)
-    u = torch.tensor(adata.layers['unspliced'].A, dtype=torch.float32).to(device)
+    s = torch.tensor(_layer_to_numpy(adata.layers['spliced']), dtype=torch.float32).to(device)
+    u = torch.tensor(_layer_to_numpy(adata.layers['unspliced']), dtype=torch.float32).to(device)
 
     scv.pp.neighbors(adata, n_neighbors=30)
     nb_indices = adata.uns['neighbors']['indices']
