@@ -38,7 +38,6 @@ dependencies = [
     "torch>=2.2.2",
     "torchvision>=0.17.2",
     "tqdm>=4.66.5",
-    "veloae>=0.2.0",
 ]
 
 [tool.setuptools.packages.find]
