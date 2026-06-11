@@ -21,9 +21,7 @@ class CellAgent(mesa.Agent):
     Attributes
     ----------
     raw_x, raw_y : float
-        Raw spatial coordinates before scaling.
-    comp_x, comp_y : float
-        Uniformly scaled spatial coordinates used for distance-based calculations.
+        Raw spatial coordinates used for distance-based calculations.
     grid_x, grid_y : int
         Integer grid coordinates used only for Mesa placement.
     expression : np.ndarray
@@ -65,12 +63,10 @@ class CellAgent(mesa.Agent):
         Initial unspliced RNA velocity vector.
     """
 
-    def __init__(self, unique_id, model, raw_x, raw_y, comp_x, comp_y, grid_x, grid_y, exp, velo, velo_u):
+    def __init__(self, unique_id, model, raw_x, raw_y, grid_x, grid_y, exp, velo, velo_u):
         super().__init__(unique_id, model)
         self.raw_x = raw_x
         self.raw_y = raw_y
-        self.comp_x = comp_x
-        self.comp_y = comp_y
         self.grid_x = grid_x
         self.grid_y = grid_y
         self.expression = exp
@@ -256,15 +252,6 @@ class CellModel(mesa.Model):
         self.adata.obs['y_loc'] = grid_coords[:, 1]
         return grid_coords
 
-    def _get_computation_coordinate_array(self, raw_coords):
-        if {'x_comp', 'y_comp'}.issubset(self.adata.obs.columns):
-            return np.asarray(self.adata.obs[['x_comp', 'y_comp']].to_numpy(), dtype=float)
-
-        comp_coords = self._scale_coordinates_for_mesa(raw_coords)
-        self.adata.obs['x_comp'] = comp_coords[:, 0]
-        self.adata.obs['y_comp'] = comp_coords[:, 1]
-        return comp_coords
-    
     def __init__(self, adata, steps, tau=2, nbr_radius=40, sig_ratio=0.7, max_gene_norm=10.0):
         """
         Initialize CellModel.
@@ -300,7 +287,6 @@ class CellModel(mesa.Model):
         self.schedule = mesa.time.BaseScheduler(self)
 
         raw_coords = self._get_raw_coordinate_array()
-        comp_coords = self._get_computation_coordinate_array(raw_coords)
         grid_coords = self._get_grid_coordinate_array(raw_coords)
 
         # create grid sized to integer max coordinate + 1
@@ -314,25 +300,25 @@ class CellModel(mesa.Model):
             exp = np.squeeze(ad_row.layers['Ms'])
             raw_x = float(raw_coords[i, 0])
             raw_y = float(raw_coords[i, 1])
-            comp_x = float(comp_coords[i, 0])
-            comp_y = float(comp_coords[i, 1])
             grid_x = int(grid_coords[i, 0])
             grid_y = int(grid_coords[i, 1])
             velo = np.squeeze(ad_row.layers['velocity'][0])
             velo_u = np.squeeze(ad_row.layers['velocity_u'][0])
 
-            ag = CellAgent(i, self, raw_x, raw_y, comp_x, comp_y, grid_x, grid_y, exp, velo, velo_u)
+            ag = CellAgent(i, self, raw_x, raw_y, grid_x, grid_y, exp, velo, velo_u)
             self.schedule.add(ag)
             self.grid.place_agent(ag, (grid_x, grid_y))
 
         # Build a positions array for all agents (for nearest-neighbors lookups)
-        coords = np.array([[ag.comp_x, ag.comp_y] for ag in self.schedule.agents])
+        coords = np.array([[ag.raw_x, ag.raw_y] for ag in self.schedule.agents])
 
+        print("Building radius-based neighbor index...")
         # Use sklearn NearestNeighbors with radius (euclidean)
         nbrs = NearestNeighbors(radius=self.nbr_radius, metric='euclidean', n_jobs=-1)
         nbrs.fit(coords)
         indices_list, dists_list = nbrs.radius_neighbors(coords, return_distance=True)
 
+        print("Attaching neighbor lists and inverse-distance weights to agents...")
         # attach neighbors + inverse-distance weights
         for i, ag in enumerate(self.schedule.agents):
             idxs = indices_list[i]
@@ -346,13 +332,21 @@ class CellModel(mesa.Model):
             dists = np.maximum(dists, 1e-6)
             ag.nbs_dists = (1.0 / (dists ** self.deg_fred)).tolist()
 
+        print("Initializing ABM neighbors...")
         self.get_neighbors()
+        print("Computing density bounds...")
         self.get_min_max_density()
+        print("Computing neighbor distances...")
         self.get_nbs_dist()
+        print("Computing neighbor expression similarities...")
         self.get_nbs_sim()
+        print("Computing density weights...")
         self.w_density()
+        print("Computing similarity/spatial scaling factors...")
         self.calc_sig_lam()
+        print("Computing similarity weights...")
         self.w_similarity()
+        print("Computing spatial weights...")
         self.w_spatial()
         
     def distance(self, p1, p2):
@@ -440,12 +434,12 @@ class CellModel(mesa.Model):
         """
         for agent in self.schedule.agents:
             nb_inv_dist = []
-            x_ag = agent.comp_x
-            y_ag = agent.comp_y
+            x_ag = agent.raw_x
+            y_ag = agent.raw_y
             ag_pos = (x_ag, y_ag)
             for nb in agent.neighbors:
-                x_nb = nb.comp_x
-                y_nb = nb.comp_y
+                x_nb = nb.raw_x
+                y_nb = nb.raw_y
                 nb_pos = (x_nb, y_nb)
                 
                 dist = self.distance(ag_pos, nb_pos)
