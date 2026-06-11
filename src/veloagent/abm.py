@@ -587,7 +587,7 @@ class CellModel(mesa.Model):
 
         This ensures that all agents update synchronously and that the model state is saved in the AnnData object.
         """
-        step_iter = tqdm(range(self.num_steps), desc="ABM steps", unit="step", leave=False) if show_progress else range(self.num_steps)
+        step_iter = tqdm(range(self.num_steps), desc="ABM steps", unit="step", leave=True) if show_progress else range(self.num_steps)
 
         for _ in step_iter:
             # First pass: compute next velocities for all agents
