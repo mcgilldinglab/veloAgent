@@ -47,6 +47,8 @@ def load_protein_paths(species, base):
             f"{base}/human/9606.protein.aliases.v12.0.txt",
             f"{base}/human/9606.protein.links.v12.0.txt"]
 
+    raise ValueError(f"Unsupported species: {species}")
+
 
 def create_con_mat(data, num_genes, prot_names, prot_alias, gene_conn, varname, confidence=False, conf_threshold=400):
     """
@@ -540,7 +542,7 @@ def cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indices)
     eps = 1e-12
     den = torch.sqrt(unv**2 + snv**2 + eps) * torch.sqrt(uv**2 + sv**2 + eps)
     den[den==0] = -1
-    cosine = torch.where(den!=-1, (unv*uv + snv*sv) / den, torch.tensor(1.)) # cosine: column -> individual cell (cellI); row -> nearby cells of cell id ; value -> cosine between col and row cells
+    cosine = torch.where(den!=0, (unv*uv + snv*sv) / den, torch.ones_like(den)) # cosine: column -> individual cell (cellI); row -> nearby cells of cell id ; value -> cosine between col and row cells
     cosine_max, cosine_max_idx = torch.max(cosine, dim=0)
     
     return 1 - cosine_max
@@ -585,7 +587,7 @@ def nbr_cosine_similarity(unspliced, spliced, pred_unspliced, pred_spliced, indi
     eps = 1e-12
     den = torch.sqrt(unv**2 + snv**2 + eps) * torch.sqrt(uv**2 + sv**2 + eps)
     den[den==0] = -1
-    cosine = torch.where(den!=-1, (unv*uv + snv*sv) / den, torch.tensor(1.)) # cosine: column -> individual cell (cellI); row -> nearby cells of cell id ; value -> cosine between col and row cells
+    cosine = torch.where(den!=0, (unv*uv + snv*sv) / den, torch.ones_like(den)) # cosine: column -> individual cell (cellI); row -> nearby cells of cell id ; value -> cosine between col and row cells
     cosine_sum = cosine.sum()
     return cosine_sum
 
@@ -614,7 +616,7 @@ def adj_velocity(data, velocity, indices):
         Adjacency-adjusted velocity tensor of the same shape as `velocity`,
         where each cell's velocity is replaced by the mean of its neighbors' velocities.
     """
-    adj_vel = velocity
+    adj_vel = velocity.clone()
 
     for j in range(data.n_obs):
         vel_n = velocity[indices[j][:]]
@@ -624,7 +626,7 @@ def adj_velocity(data, velocity, indices):
     return adj_vel
 
 
-def train_gg(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25, device='cpu'):
+def train_gg(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=256, device='cpu'):
     """
     Train a GeneNet model to predict RNA kinetic rates.
 
@@ -652,8 +654,8 @@ def train_gg(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num
         Number of nearest neighbors for computing cosine similarity loss.
     dt : float, optional (default=0.3)
         Time step used in velocity prediction.
-    batch : float, optional (default=0.25)
-        Fraction of cells to sample per mini-batch.
+    batch : int, optional (default=256)
+        Number of cells to sample per mini-batch.
     device : str, optional (default="cpu")
         Device used for training
 
@@ -690,7 +692,8 @@ def train_gg(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num
         for epoch in pbar:
             
             # Subsample cells for mini-batch training
-            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            batch_size = min(data.n_obs, max(1, int(batch)))
+            subsample_idx = np.random.choice(data.n_obs, size=batch_size, replace=False)
             subsample = data[subsample_idx, :]
 
             latent = torch.tensor(subsample.obsm[embed_basis], dtype=torch.float32).to(device)
@@ -754,7 +757,7 @@ def train_gg(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num
     logging.info("Training complete")
 
 
-def train_nbr(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt=0.3, batch=0.25, device="cpu", tau_nbr=0.2):
+def train_nbr(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt=0.3, batch=256, device="cpu", tau_nbr=0.2):
     """
     Fine-tune training GeneNet model using neighbor-based cosine similarity loss.
 
@@ -782,8 +785,8 @@ def train_nbr(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt
         Number of nearest neighbors to compute neighbor-based loss.
     dt : float, optional (default=0.3)
         Time step used in velocity prediction.
-    batch : float, optional (default=0.25)
-        Fraction of cells to sample per mini-batch.
+    batch : int, optional (default=256)
+        Number of cells to sample per mini-batch.
     device : str, optional (default="cpu")
         Device used for training
     tau_nbr : float, optional (default=0.2)
@@ -808,7 +811,8 @@ def train_nbr(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt
     with trange(num_epochs) as pbar:
         for i in pbar:
             # Subsample cells for mini-batch training
-            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            batch_size = min(data.n_obs, max(1, int(batch)))
+            subsample_idx = np.random.choice(data.n_obs, size=batch_size, replace=False)
             subsample = data[subsample_idx, :]
 
             latent = torch.tensor(subsample.obsm[embed_basis], dtype=torch.float32).to(device)
@@ -864,7 +868,7 @@ def train_nbr(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt
     logging.info("Training complete")
 
 
-def train_gg_counts(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=0.25, device='cpu'):
+def train_gg_counts(num_epochs, data, embed_basis, genenet, optimizer, patience=10, num_nbrs=30, dt=0.3, batch=256, device='cpu'):
     """
     Train a GeneNet model to predict RNA kinetic rates.
 
@@ -892,8 +896,8 @@ def train_gg_counts(num_epochs, data, embed_basis, genenet, optimizer, patience=
         Number of nearest neighbors for computing cosine similarity loss.
     dt : float, optional (default=0.3)
         Time step used in velocity prediction.
-    batch : float, optional (default=0.25)
-        Fraction of cells to sample per mini-batch.
+    batch : int, optional (default=256)
+        Number of cells to sample per mini-batch.
     device : str, optional (default="cpu")
         Device used for training
 
@@ -930,7 +934,8 @@ def train_gg_counts(num_epochs, data, embed_basis, genenet, optimizer, patience=
         for epoch in pbar:
             
             # Subsample cells for mini-batch training
-            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            batch_size = min(data.n_obs, max(1, int(batch)))
+            subsample_idx = np.random.choice(data.n_obs, size=batch_size, replace=False)
             subsample = data[subsample_idx, :]
 
             spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)
@@ -997,7 +1002,7 @@ def train_gg_counts(num_epochs, data, embed_basis, genenet, optimizer, patience=
     logging.info("Training complete")
 
 
-def train_nbr_counts(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt=0.3, batch=0.25, device="cpu", tau_nbr=0.2):
+def train_nbr_counts(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs=30, dt=0.3, batch=256, device="cpu", tau_nbr=0.2):
     """
     Fine-tune training GeneNet model using neighbor-based cosine similarity loss.
 
@@ -1025,8 +1030,8 @@ def train_nbr_counts(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs
         Number of nearest neighbors to compute neighbor-based loss.
     dt : float, optional (default=0.3)
         Time step used in velocity prediction.
-    batch : float, optional (default=0.25)
-        Fraction of cells to sample per mini-batch.
+    batch : int, optional (default=256)
+        Number of cells to sample per mini-batch.
     device : str, optional (default="cpu")
         Device used for training
     tau_nbr : float, optional (default=0.2)
@@ -1051,7 +1056,8 @@ def train_nbr_counts(num_epochs, data, embed_basis, genenet, optimizer, num_nbrs
     with trange(num_epochs) as pbar:
         for i in pbar:
             # Subsample cells for mini-batch training
-            subsample_idx = np.random.choice(data.n_obs, size=int(data.n_obs * batch), replace=False)
+            batch_size = min(data.n_obs, max(1, int(batch)))
+            subsample_idx = np.random.choice(data.n_obs, size=batch_size, replace=False)
             subsample = data[subsample_idx, :]
 
             spliced = torch.tensor(subsample.layers['Ms'], dtype=torch.float32).to(device)

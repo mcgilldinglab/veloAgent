@@ -41,7 +41,7 @@ __all__ = [
     # VAE
     "Encoder",
     "Decoder",
-    "VariationalAutoEncoderGCN",
+    "VariationalAutoEncoder",
     "get_vae",
     "train_vae",
     "get_embedding",
