@@ -36,7 +36,7 @@ dependencies = [
     "statannotations==0.7.2",
     "statsmodels==0.14.1",
     "tqdm==4.66.5",
-    "veloae @ git+https://github.com/mcgilldinglab/veloAE.git",
+    "veloae @ git+https://github.com/qiaochen/VeloAE.git",
 ]
 
 [tool.setuptools.packages.find]
