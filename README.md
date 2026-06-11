@@ -40,7 +40,13 @@ conda create -n myvirtenv python=3.8
 ### 2️⃣ Activate the environment
 conda activate myvirtenv
 
-### 3️⃣ Install veloAgent directly from GitHub
+### 3️⃣ Install PyTorch separately
+Install PyTorch separately so you can choose the correct CPU or CUDA build for your platform.
+
+For platform-specific CPU/GPU install instructions for PyTorch, see the official PyTorch guide:
+https://pytorch.org/get-started/locally/
+
+### 4️⃣ Install veloAgent directly from GitHub
 pip install git+https://github.com/mcgilldinglab/veloAgent.git
 
 ## Contact
