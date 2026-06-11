@@ -11,7 +11,7 @@ def preprocess(data, num_genes=2000, min_count=20, log_norm=True):
 
     This function performs:
     1. Conversion of spliced/unspliced layers to sparse float32 matrices.
-    2. Gene filtering and normalization (selecting highly variable genes).
+    2. Optional scVelo filtering/normalization/HVG selection.
     3. Replacement of NaN values in `data.X` with zeros.
     4. Computation of a nearest-neighbor graph.
     5. Computation of first- and second-order moments (required for velocity estimation).
@@ -24,6 +24,10 @@ def preprocess(data, num_genes=2000, min_count=20, log_norm=True):
         Number of highly variable genes to retain.
     min_count : int, optional (default: 20)
         Minimum number of shared counts required for gene filtering.
+    log_norm : bool, optional (default: True)
+        If True, run `scv.pp.filter_and_normalize(...)`, which performs
+        filtering, normalization, and HVG selection. If False, that entire
+        preprocessing step is skipped.
 
     Returns
     -------
