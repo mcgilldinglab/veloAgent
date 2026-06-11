@@ -48,10 +48,56 @@ https://pytorch.org/get-started/locally/
 
 ### 4️⃣ Install veloAgent directly from GitHub
 ```
-git clone https://github.com/mcgilldinglab/CellAgentChat.git
-cd CellAgentChat
+git clone https://github.com/mcgilldinglab/veloAgent.git
+cd veloAgent
 pip install .
 ```
+
+## 🧬 STRING DB setup for GG Net
+For the gene-gene network utilities, users must download STRING DB files manually from:
+
+https://string-db.org/cgi/download?sessionId=bXn82hPMr4fT
+
+You need these three files for the species you plan to use:
+
+- `protein.aliases`
+- `protein.links`
+- `protein.info`
+
+At this point, `veloAgent` supports:
+
+- `mouse`
+- `human`
+- `chicken`
+
+These files should be stored under the `base` directory passed to `veloagent.load_protein_paths(species, base)`, inside a subdirectory named after the species.
+
+Example:
+
+```python
+paths = veloagent.load_protein_paths(species="mouse", base="data/conn_mat")
+```
+
+Expected directory layout:
+
+```text
+data/conn_mat/
+  mouse/
+    10090.protein.info.v12.0.txt
+    10090.protein.aliases.v12.0.txt
+    10090.protein.links.v12.0.txt
+  human/
+    9606.protein.info.v12.0.txt
+    9606.protein.aliases.v12.0.txt
+    9606.protein.links.v12.0.txt
+  chicken/
+    9031.protein.info.v12.0.txt
+    9031.protein.aliases.v12.0.txt
+    9031.protein.links.v12.0.txt
+```
+
+## 📄 Release Notes
+See [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## Contact
 [Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)
