@@ -96,8 +96,8 @@ data/conn_mat/
     9031.protein.links.v12.0.txt
 ```
 
-## 📄 Release Notes
-See [RELEASE_NOTES.md](RELEASE_NOTES.md).
+## 📄 Release History
+* `0.1.0`: Initial veloAgent workflow.
 
 ## Contact
-[Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)
+[Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)
