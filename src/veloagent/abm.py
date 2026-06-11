@@ -4,6 +4,10 @@ from numpy.linalg import norm
 from sklearn.neighbors import NearestNeighbors
 from mesa.visualization.UserParam import *
 import math
+from tqdm import tqdm
+
+
+MESA_TARGET_RANGE = 100.0
 
 
 # Agent Based Model
@@ -16,8 +20,12 @@ class CellAgent(mesa.Agent):
 
     Attributes
     ----------
-    pos_x, pos_y : float
-        Spatial coordinates of the cell.
+    raw_x, raw_y : float
+        Raw spatial coordinates before scaling.
+    comp_x, comp_y : float
+        Uniformly scaled spatial coordinates used for distance-based calculations.
+    grid_x, grid_y : int
+        Integer grid coordinates used only for Mesa placement.
     expression : np.ndarray
         Gene expression vector for this cell.
     neighbors : list of CellAgent
@@ -57,10 +65,14 @@ class CellAgent(mesa.Agent):
         Initial unspliced RNA velocity vector.
     """
 
-    def __init__(self, unique_id, model, cell_x, cell_y, exp, velo, velo_u):
+    def __init__(self, unique_id, model, raw_x, raw_y, comp_x, comp_y, grid_x, grid_y, exp, velo, velo_u):
         super().__init__(unique_id, model)
-        self.pos_x = cell_x
-        self.pos_y = cell_y
+        self.raw_x = raw_x
+        self.raw_y = raw_y
+        self.comp_x = comp_x
+        self.comp_y = comp_y
+        self.grid_x = grid_x
+        self.grid_y = grid_y
         self.expression = exp
         self.neighbors = None
         self.nbs_dists = None
@@ -206,6 +218,52 @@ class CellModel(mesa.Model):
     step()
         Perform synchronous velocity updates for all agents and store results in `adata`.
     """
+
+    @staticmethod
+    def _scale_coordinates_for_mesa(coords, target_range=MESA_TARGET_RANGE):
+        mins = np.min(coords, axis=0)
+        shifted = coords - mins
+        max_range = float(np.max(np.ptp(coords, axis=0))) if coords.size else 0.0
+        if max_range <= 0:
+            scaled = np.zeros_like(coords, dtype=float)
+        else:
+            scaled = shifted * (target_range / max_range)
+        return scaled
+
+    def _get_raw_coordinate_array(self):
+        if {'x_raw', 'y_raw'}.issubset(self.adata.obs.columns):
+            return np.asarray(self.adata.obs[['x_raw', 'y_raw']].to_numpy(), dtype=float)
+
+        if 'spatial' not in self.adata.obsm:
+            raise ValueError("ABM requires adata.obs[['x_raw', 'y_raw']] or adata.obsm['spatial'].")
+
+        coords = np.asarray(self.adata.obsm['spatial'], dtype=float)
+        if coords.ndim != 2 or coords.shape[0] != self.adata.n_obs or coords.shape[1] < 2:
+            raise ValueError("adata.obsm['spatial'] must be a 2D array with at least two columns and one row per cell.")
+
+        raw_coords = coords[:, :2].copy()
+        self.adata.obs['x_raw'] = raw_coords[:, 0]
+        self.adata.obs['y_raw'] = raw_coords[:, 1]
+        return raw_coords
+
+    def _get_grid_coordinate_array(self, raw_coords):
+        if {'x_loc', 'y_loc'}.issubset(self.adata.obs.columns):
+            return np.asarray(self.adata.obs[['x_loc', 'y_loc']].to_numpy(), dtype=int)
+
+        scaled_coords = self._scale_coordinates_for_mesa(raw_coords)
+        grid_coords = np.rint(scaled_coords).astype(int, copy=False)
+        self.adata.obs['x_loc'] = grid_coords[:, 0]
+        self.adata.obs['y_loc'] = grid_coords[:, 1]
+        return grid_coords
+
+    def _get_computation_coordinate_array(self, raw_coords):
+        if {'x_comp', 'y_comp'}.issubset(self.adata.obs.columns):
+            return np.asarray(self.adata.obs[['x_comp', 'y_comp']].to_numpy(), dtype=float)
+
+        comp_coords = self._scale_coordinates_for_mesa(raw_coords)
+        self.adata.obs['x_comp'] = comp_coords[:, 0]
+        self.adata.obs['y_comp'] = comp_coords[:, 1]
+        return comp_coords
     
     def __init__(self, adata, steps, tau=2, nbr_radius=40, sig_ratio=0.7, max_gene_norm=10.0):
         """
@@ -241,26 +299,34 @@ class CellModel(mesa.Model):
         # scheduler + grid
         self.schedule = mesa.time.BaseScheduler(self)
 
+        raw_coords = self._get_raw_coordinate_array()
+        comp_coords = self._get_computation_coordinate_array(raw_coords)
+        grid_coords = self._get_grid_coordinate_array(raw_coords)
+
         # create grid sized to integer max coordinate + 1
-        max_x = int(np.max(adata.obs['x_loc'])) + 1
-        max_y = int(np.max(adata.obs['y_loc'])) + 1
+        max_x = int(np.max(grid_coords[:, 0])) + 1
+        max_y = int(np.max(grid_coords[:, 1])) + 1
         self.grid = mesa.space.MultiGrid(width=max_x, height=max_y, torus=False)
 
         # Create agents first
         for i in range(self.num_agents):
             ad_row = self.adata[self.adata.obs_names[i]]
             exp = np.squeeze(ad_row.layers['Ms'])
-            x_loc = int(ad_row.obs['x_loc'][0])
-            y_loc = int(ad_row.obs['y_loc'][0])
+            raw_x = float(raw_coords[i, 0])
+            raw_y = float(raw_coords[i, 1])
+            comp_x = float(comp_coords[i, 0])
+            comp_y = float(comp_coords[i, 1])
+            grid_x = int(grid_coords[i, 0])
+            grid_y = int(grid_coords[i, 1])
             velo = np.squeeze(ad_row.layers['velocity'][0])
             velo_u = np.squeeze(ad_row.layers['velocity_u'][0])
 
-            ag = CellAgent(i, self, x_loc, y_loc, exp, velo, velo_u)
+            ag = CellAgent(i, self, raw_x, raw_y, comp_x, comp_y, grid_x, grid_y, exp, velo, velo_u)
             self.schedule.add(ag)
-            self.grid.place_agent(ag, (x_loc, y_loc))
+            self.grid.place_agent(ag, (grid_x, grid_y))
 
         # Build a positions array for all agents (for nearest-neighbors lookups)
-        coords = np.array([[ag.pos_x, ag.pos_y] for ag in self.schedule.agents])
+        coords = np.array([[ag.comp_x, ag.comp_y] for ag in self.schedule.agents])
 
         # Use sklearn NearestNeighbors with radius (euclidean)
         nbrs = NearestNeighbors(radius=self.nbr_radius, metric='euclidean', n_jobs=-1)
@@ -374,12 +440,12 @@ class CellModel(mesa.Model):
         """
         for agent in self.schedule.agents:
             nb_inv_dist = []
-            x_ag = agent.pos_x
-            y_ag = agent.pos_y
+            x_ag = agent.comp_x
+            y_ag = agent.comp_y
             ag_pos = (x_ag, y_ag)
             for nb in agent.neighbors:
-                x_nb = nb.pos_x
-                y_nb = nb.pos_y
+                x_nb = nb.comp_x
+                y_nb = nb.comp_y
                 nb_pos = (x_nb, y_nb)
                 
                 dist = self.distance(ag_pos, nb_pos)
@@ -514,7 +580,7 @@ class CellModel(mesa.Model):
             agent.sig = self.sig_ratio * (1 - agent.density_w)
             agent.lam = lam_ratio * (1 - agent.density_w)
             
-    def step(self):
+    def step(self, show_progress=False):
         """
         Advance the model by one simulation step (or `num_steps` sub-steps).
 
@@ -527,7 +593,9 @@ class CellModel(mesa.Model):
 
         This ensures that all agents update synchronously and that the model state is saved in the AnnData object.
         """
-        for _ in range(self.num_steps):
+        step_iter = tqdm(range(self.num_steps), desc="ABM steps", unit="step", leave=False) if show_progress else range(self.num_steps)
+
+        for _ in step_iter:
             # First pass: compute next velocities for all agents
             for agent in self.schedule.agents:
                 agent.compute_next_velo()
