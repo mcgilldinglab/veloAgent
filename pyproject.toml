@@ -11,7 +11,7 @@ authors = [
     { name="Brent Yoon", email="brentyoon10@gmail.com" }
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11.8"
 license = { text="MIT" }
 keywords = ["rna", "velocity", "agent-based", "scRNA-seq"]
 classifiers = [
