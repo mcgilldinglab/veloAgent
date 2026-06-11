@@ -47,7 +47,11 @@ For platform-specific CPU/GPU install instructions for PyTorch, see the official
 https://pytorch.org/get-started/locally/
 
 ### 4️⃣ Install veloAgent directly from GitHub
-pip install git+https://github.com/mcgilldinglab/veloAgent.git
+```
+git clone https://github.com/mcgilldinglab/CellAgentChat.git
+cd CellAgentChat
+pip install .
+```
 
 ## Contact
 [Brent Yoon](mailto:ji.s.yoon@mail.mcgill.ca), [Vishvak Raghavan](mailto:vishvak.raghavan@mail.mcgill.ca), [Jun Ding](mailto:jun.ding@mcgill.ca)
