@@ -12,11 +12,10 @@ authors = [
 ]
 readme = "README.md"
 requires-python = ">=3.11.8"
-license = { text="MIT" }
+license = { text="PolyForm-Noncommercial-1.0.0" }
 keywords = ["rna", "velocity", "agent-based", "scRNA-seq"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent"
 ]
 
